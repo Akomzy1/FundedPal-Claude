@@ -4,7 +4,7 @@
 
 A complete build specification for FundedPal — an AI-driven SMC/ICT trading platform purpose-built for prop firm accounts, with auto-detected rule enforcement and prop-firm-compliant execution modes. Optimised for build with Claude Code.
 
-This document integrates the original 35-prompt sequence plus three formerly-separate amendments (Risk Budget Layer, Account Journeys, Firm Curation & Rule Monitoring) into a single linear build path. Total: 38 prompts across 8 phases.
+This document integrates the original 35-prompt sequence plus five amendments (Risk Budget Layer, Account Journeys, Firm Curation & Rule Monitoring, Referral Program, Refund Policy) into a single linear build path. Total: 40 prompts across 8 phases.
 
 ---
 
@@ -95,8 +95,12 @@ The complete schema is built incrementally across multiple prompts. The full fin
 - `journal_entries` — auto + manual + AI reflections
 - `backtests` — backtest configurations and results
 - `push_subscriptions` — Web Push subscriptions
+- `referral_codes` — per-user unique referral codes with aggregated stats
+- `referrals` — tracking referral relationships and reward state
+- `refund_events` — audit trail for technical refunds (rare exception cases only)
+- `account_instrument_specs` — broker-reported instrument specifications per account
 
-Schemas are defined inline in their respective prompts. See Prompts 4 (initial schema), 8 (rule profiles), 11 (accounts), 15.5 (risk budget), 22.5 (journeys), 29.5 (firm curation + monitoring), and others.
+Schemas are defined inline in their respective prompts. See Prompts 5 (profiles + auth), 8 (firms + curation), 9 (rule profiles + overrides), 12 (accounts + journeys + risk budget), 14 (instrument specs + bridge), 23 (signals), 31 (backtests), 32 (journal), 33 (rule snapshots), 34 (firm reviews), 35.5 (referral codes + referrals), and 35.7 (refund events).
 
 ---
 
@@ -135,6 +139,7 @@ fundedpal/
 │   ├── strategy/
 │   ├── monitor/                         # rule monitor
 │   ├── journey/                         # account journey logic
+│   ├── referrals/                       # referral code generation, fraud detection
 │   ├── format.ts
 │   ├── logger.ts
 │   └── utils.ts
@@ -156,7 +161,7 @@ fundedpal/
 
 ## 5. Build Prompts
 
-38 prompts across 8 phases. Run sequentially. Each prompt is self-contained and verifiable.
+40 prompts across 8 phases. Run sequentially. Each prompt is self-contained and verifiable.
 
 ### Phase 0 — Foundation
 
@@ -603,9 +608,11 @@ fundedpal/
 > ```
 >
 > Add to `/lib/compliance/rule-checks.ts`:
-> - checkPerTradeRisk: worst-case loss / starting_balance vs per_trade_risk_pct. Rejection includes suggested adjustment ("Reduce lot size to 0.6 or widen stop to 1.10180").
-> - checkDailySoftCap: realised today + worst-case open + worst-case proposed vs daily_soft_cap_pct.
+> - checkPerTradeRisk: worst-case loss / **current_equity_cents** vs per_trade_risk_pct. Rejection includes suggested adjustment ("Reduce lot size to 0.6 or widen stop to 1.10180").
+> - checkDailySoftCap: realised today + worst-case open + worst-case proposed vs daily_soft_cap_pct (calculated against current_equity_cents).
 > - checkMaxTradesPerDay: positions opened today (any status) vs max_trades_per_day.
+>
+> **Critical: position sizing math uses `accounts.current_equity_cents`, NOT `accounts.starting_balance_cents`.** This is intentional. Equity-based sizing naturally shrinks position size during drawdown (protecting accounts when they're already weak) and grows during winning streaks (compounding when the strategy works). At t=0, equity equals starting balance so behaviour is identical to starting-balance sizing — but as equity diverges, the equity-based approach is materially safer.
 >
 > Update `/lib/compliance/guard.ts` to run soft checks BEFORE hard checks:
 > 1. checkPerTradeRisk (soft)
@@ -685,30 +692,53 @@ fundedpal/
 > - detect_market_structure: HH/HL/LH/LL across swing-point window. Use 5-bar fractal-based swing detection.
 > - detect_bos: break of structure on close beyond last swing
 > - detect_choch: change of character — first opposite-direction structure shift
-> - detect_order_block: last opposite candle before impulsive structure-breaking move with displacement ≥ 2× previous candle range. Mitigated when price closes through.
-> - detect_fvg: 3-candle definition. Bullish FVG: gap between candle 1's high and candle 3's low. Bearish: candle 1's low and candle 3's high. Filled at midpoint (50%).
+> - detect_order_block: last opposite candle before impulsive structure-breaking move with displacement ≥ 2× previous candle range, **AND must follow at least 3 candles of relative compression** (range smaller than 1× ATR over the prior 5-candle average). The compression filter reduces false-positive order blocks from noisy single-candle spikes. Mitigated when price closes through.
+> - detect_fvg: 3-candle definition. Bullish FVG: gap between candle 1's high and candle 3's low. Bearish: candle 1's low and candle 3's high. Filled at midpoint (50%) — note this 50% is configurable in parameters.py and validated per instrument; not assumed universal.
 > - detect_breaker_block: failed order block becomes resistance/support
-> - detect_liquidity_pools: equal highs/lows within tolerance. Tolerance: 0.1 ATR for FX majors, 0.15 ATR for metals, 0.2 ATR for indices.
+> - detect_liquidity_pools: equal highs/lows within tolerance. Tolerance: 0.1 ATR for FX majors, 0.15 ATR for metals.
+> - **detect_regime (NEW): classifies current market state as 'trending', 'transitional', or 'ranging' using ADX(14) on the entry timeframe. ADX > 25 = trending; 20-25 = transitional; < 20 = ranging. Returns { regime: str, adx_value: float, atr_compression: float }. Used by the confluence engine to filter signals.**
+> - **detect_retracement_score (NEW): given a swing range and current price, returns a continuous score 0.0-1.0 representing the quality of the retracement zone. Peak score at 70% retrace, declining smoothly to 0.3 at 50% and 0.2 at 90%. Replaces the previous binary OTE 62-79% trigger.**
 > - detect_killzone: current time in Asian (20:00-00:00 EST), London (02:00-05:00 EST), NY AM (08:30-11:00 EST), NY PM (13:30-16:00 EST), with DST handling
 >
-> Add unit tests in `/strategy-engine/tests/test_known_patterns.py` with 10+ hand-curated historical examples (5 patterns × 2 symbols), verifying engine identifies each correctly within 1 candle.
+> Add unit tests in `/strategy-engine/tests/test_known_patterns.py` with 10+ hand-curated historical examples (5 patterns × 2 symbols), verifying engine identifies each correctly within 1 candle. Include regime detection tests covering known trending periods (e.g. EUR/USD March 2024) and known ranging periods (e.g. EUR/USD August 2023 summer drift).
 >
-> Verify: pytest passes; primitives correctly identify a known order block on EURUSD 1h on a date you can manually validate.
+> Verify: pytest passes; primitives correctly identify a known order block on EURUSD 1h on a date you can manually validate; regime classifier correctly identifies at least 3 known trending vs ranging historical periods.
 
 **Prompt 23 — Confluence scoring & signal generation**
 
-> Build confluence scoring in `/strategy-engine/smc/confluence.py`. Given current chart state, factors weighted explicitly in `/strategy-engine/config/parameters.py`:
+> Build confluence scoring in `/strategy-engine/smc/confluence.py`. The scoring uses 5 orthogonal factors weighted to total 100 points, with explicit downweighting rules where factors correlate.
 >
-> - HTF bias (4h or daily structure direction): 20 points
-> - Proximity to valid POI (order block / breaker / FVG): 20 points
-> - Liquidity sweep just occurred: 15 points
-> - In active killzone: 15 points
-> - OTE level reached (62-79% retracement into POI): 15 points
-> - Structure shift confirmed on entry timeframe: 15 points
+> **Pre-condition: regime filter.** Before any scoring, check `detect_regime()` output (from Prompt 22). If regime is 'ranging' (ADX < 20), no signals are generated regardless of confluence. If 'transitional' (ADX 20-25), the confluence threshold is raised by 5 points. If 'trending' (ADX > 25), normal scoring applies. Document the gate clearly in rejection reasoning logged to compliance_decisions.
 >
-> Total = confluence score (0-100). Generate signal only when score ≥ 70 (configurable per phase via phase_aggression_curve from Prompt 27).
+> **The 5 factors (weighted in `/strategy-engine/config/parameters.py`):**
 >
-> Signal includes: entry, stop_loss (just beyond POI), take_profit (next liquidity pool, minimum 2R). Position sizing risk-based per Risk Budget Layer — `(per_trade_risk_pct × starting_balance) / (entry-SL pips × pip_value)`, rounded DOWN to broker's lot step.
+> 1. **HTF bias (20 points)** — daily/4h structure direction aligned with proposed trade direction
+>
+> 2. **Location quality (25 points, merged factor)** — combines POI proximity AND retracement quality into one continuous score:
+>    - 60% weight from POI presence/freshness (order block, breaker, or FVG within striking distance, not yet mitigated)
+>    - 40% weight from retracement score (continuous 0.0-1.0 from `detect_retracement_score`, peaking at 70% retrace)
+>    - This merge eliminates the double-counting problem where OTE and POI proximity scored separately for what is essentially the same condition
+>
+> 3. **Liquidity event (15 points)** — sweep of equal highs/lows or stop run beyond recent swing, with strong rejection wick (close back inside range)
+>
+> 4. **Active killzone (15 points)** — current time in enabled killzone window
+>
+> 5. **Structure shift on entry timeframe (25 points, with downweighting)** — BOS or CHoCH printed on the entry timeframe in the trade direction. **Downweighted to 10 points if a liquidity sweep already scored**, because sweeps frequently cause structure shifts and counting both fully would overstate independent confluence.
+>
+> Total = 100 points. Generate signal only when score ≥ 70 (raised by 5 in transitional regimes, configurable per phase via phase_aggression_curve from Prompt 26).
+>
+> **Position sizing — equity-based, NOT starting-balance based:**
+>
+> ```
+> position_size = (per_trade_risk_pct × accounts.current_equity_cents)
+>                 / (entry_to_SL_pips × pip_value_account_currency_per_lot)
+> ```
+>
+> Read `pip_value_account_currency_per_lot` from `account_instrument_specs` (broker-reported, never hardcoded). Round DOWN to broker's `min_lot_step`. Currency conversion via OANDA rate cached 60s.
+>
+> **Why current equity not starting balance:** As equity diverges from starting balance, equity-based sizing naturally protects accounts during drawdown (smaller positions when equity is lower) and compounds during winning streaks. At t=0 the math is identical; the divergence is the protection. This applies to both the strategy engine's position sizing AND the Compliance Guardian's checks (per Prompt 18).
+>
+> Signal includes: entry, stop_loss (just beyond POI), take_profit (next liquidity pool, minimum 2R).
 >
 > Persist generated signals to Supabase signals table:
 >
@@ -723,6 +753,9 @@ fundedpal/
 >   stop_loss numeric(12,5) not null,
 >   take_profit numeric(12,5) not null,
 >   confluence_score int not null,
+>   regime text not null,
+>   regime_adx numeric(5,2),
+>   factor_scores jsonb not null,
 >   reasoning jsonb not null,
 >   killzone text,
 >   status text not null default 'generated' check (status in ('generated','executed','expired','rejected')),
@@ -731,21 +764,23 @@ fundedpal/
 > );
 > ```
 >
+> The `factor_scores` jsonb stores the breakdown — htf_bias, location, liquidity, killzone, structure_shift — making it possible to retrospectively analyse which factors most reliably predict outcomes. This data feeds future parameter refinement (deliberate, version-bumped — never runtime drift).
+>
 > Lookahead bias check: every decision at time T uses only data ≤ T. Test by shifting backtest data forward by 1 candle; results must change.
 >
 > **Supported instruments at v1 (10 total):** EUR/USD, GBP/USD, USD/JPY, USD/CHF, AUD/USD, USD/CAD, NZD/USD, EUR/GBP, EUR/JPY, XAU/USD. The strategy engine generates signals only for these instruments. The instrument list is hardcoded in `/strategy-engine/config/instruments.py` and matches the canonical symbols used throughout the platform.
 >
 > **Gold (XAUUSD) specific handling in the strategy engine:** position sizing uses the per-account broker-reported pip value from `account_instrument_specs`, not a hardcoded value. Backtests for gold require verifying the historical data uses the same pip convention as the production broker — backtest config must specify the assumed pip definition explicitly.
 >
-> Backtest sanity criteria (per instrument, 3 months historical data):
+> Backtest sanity criteria (per instrument, 3 months historical data, **with realistic friction modelling per Prompt 31**):
 > - Signal frequency: 5-25 signals
-> - Win rate: 40-65%
+> - Win rate: 40-60% (note: realistic range after friction; without friction modelling, numbers will be inflated and meaningless)
 > - Average R: ≥ 1.5
 > - Max drawdown: < 15%
 >
 > Run sanity check on at least 3 different instruments before signing off Prompt 23 (recommend: EURUSD, GBPUSD, XAUUSD — covers FX major, FX-with-volatility, and metal cases).
 >
-> Verify: backtested over 3 months, engine produces sensible numbers across multiple symbols including gold.
+> Verify: backtested over 3 months with friction modelling enabled, engine produces sensible numbers across multiple symbols including gold; regime filter correctly suppresses signals in known ranging periods; factor_scores persisted for every signal.
 
 **Prompt 24 — Signal review & one-tap execute**
 
@@ -906,6 +941,7 @@ fundedpal/
 >   date_from date not null,
 >   date_to date not null,
 >   config jsonb not null,
+>   friction_config jsonb not null,                -- slippage, spread, latency assumptions
 >   results jsonb,
 >   status text not null default 'queued',
 >   created_at timestamptz not null default now(),
@@ -915,13 +951,40 @@ fundedpal/
 >
 > UI at `/app/(app)/backtest`: configure (firm + rule profile + account size + symbols + timeframe + date range + risk profile: "FundedPal default" or "Custom"), submit creates backtests row and triggers Python engine.
 >
+> **Friction modelling — non-negotiable for honest backtests.** Every backtest must apply realistic execution friction. Without this, results are inflated and meaningless. The friction config defaults are:
+>
+> ```python
+> # /strategy-engine/backtest/friction.py
+> DEFAULT_FRICTION = {
+>     # Slippage in pips (added to entry/SL/TP execution prices, against the trade)
+>     "slippage_pips": {
+>         "fx_major": 0.5,        # EUR/USD, GBP/USD, etc.
+>         "fx_jpy": 1.0,          # USD/JPY, EUR/JPY
+>         "fx_cross": 1.5,        # EUR/GBP
+>         "metal_xau": 3.0,       # gold — wider slippage
+>     },
+>     # Spread variation (multiplier on historical avg spread, applied stochastically)
+>     "spread_multiplier_range": [0.8, 1.5],
+>     # Spread spike during news (when news event within 5 minutes)
+>     "news_spread_spike_multiplier": 3.0,
+>     # Execution latency simulated (ms between signal and fill)
+>     "latency_ms_range": [200, 500],
+>     # Skip trades during high-impact news (matches live behaviour)
+>     "skip_news_blackout": True,
+>     # Re-quote rejection probability (broker rejects fill, retry at worse price)
+>     "requote_probability": 0.02,
+> }
+> ```
+>
+> Users can override defaults via "Custom" risk profile, but defaults are conservative on purpose. The UI explicitly displays the friction assumptions so traders see what was simulated.
+>
 > Engine runs strategy with Compliance Guardian active including Risk Budget Layer (so backtest shows what FundedPal would actually do, not maximum aggression).
 >
-> Results page: equity curve, drawdown curve, win rate, profit factor, average R, number of compliance rejections (and why), verdict on whether strategy would have passed Phase 1.
+> Results page: equity curve, drawdown curve, win rate, profit factor, average R, number of compliance rejections (and why), verdict on whether strategy would have passed Phase 1. Also shown explicitly: a "Friction Impact" section comparing the realistic result vs. an idealised no-friction simulation, so the trader sees how much friction matters. This is honest disclosure, not a marketing trick.
 >
 > Use Recharts with FundedPal theme.
 >
-> Verify: backtesting EURUSD 1h FTMO Phase 1 $100k over last 3 months completes and produces coherent verdict.
+> Verify: backtesting EURUSD 1h FTMO Phase 1 $100k over last 3 months completes and produces coherent verdict; friction config is applied and visible in the results UI; results materially differ between realistic friction and no-friction modes (if they don't, the friction layer isn't actually engaging).
 
 **Prompt 32 — Journal co-pilot (Pro+)**
 
@@ -1037,6 +1100,447 @@ fundedpal/
 >
 > Verify: full signup → trial → upgrade → cancel flow works in Stripe test mode.
 
+**Prompt 35.5 — Referral program**
+
+> Build the FundedPal referral program. This is a trader-to-trader referral system — community-driven word-of-mouth, not affiliate marketing. Every paying user gets a unique referral code; when someone signs up via that code and converts to paid, both parties benefit.
+>
+> ### Reward structure (locked)
+>
+> - **Referred user** gets 50% off their first paid month after the trial ends
+> - **Referrer** gets a Stripe credit equal to the dollar value of one month of their current subscription tier, applied to their next invoice
+> - **Trigger:** referred user's first successful payment after trial conversion (NOT signup, NOT trial start)
+>
+> ### Critical rules (locked)
+>
+> 1. **Cap: 6 successful paid referrals per rolling 12-month window per referrer.** After hitting the cap, new referrals don't earn the referrer any credit, but the referred user still gets their 50% off (so the referrer's audience isn't penalised). The cap resets on a rolling basis as old referrals age past 365 days, not on calendar year boundaries.
+>
+> 2. **Credit value is a dollar amount, not "one month of tier."** When a referrer earns a credit on Trader tier ($39), they get $39 of Stripe customer balance. If they later upgrade to Pro ($69) and use the credit, it covers $39 of the $69 invoice — they pay $30 out of pocket. This avoids gaming via tier-upgrade timing and makes credit value transparent.
+>
+> 3. **Discount stacking — bigger discount wins, never stack.** If the referred user has both a referral discount (50% off) AND another promotion code active (e.g. Black Friday 30% off), only the larger discount applies. Never both. Comparison is on first-month dollar saving. The referrer still gets their credit regardless of which discount the referred user actually used — that's tracked separately from the discount applied.
+>
+> 4. **Single-tier only.** No multi-level marketing. The friend Tokunbo refers earns from their own referrals; Tokunbo gets nothing from those secondary referrals. Keeps the structure legally simple and brand-consistent.
+>
+> 5. **30-day clawback window.** If the referred user requests a refund within 30 days of first payment, the referrer's credit is clawed back (reduced from Stripe balance if not yet used; subtracted from next earned credit if already used). After 30 days, credits are locked in.
+>
+> 6. **Tier changes don't claw back retroactively.** If the referred user later downgrades or pauses their subscription, the referrer's already-earned credit is unaffected. First payment triggers the reward; subsequent behaviour doesn't reverse it.
+>
+> ### Database schema
+>
+> ```sql
+> create table public.referral_codes (
+>   user_id uuid primary key references public.profiles(id) on delete cascade,
+>   code text not null unique,
+>   total_signups int not null default 0,
+>   total_paid_conversions int not null default 0,
+>   total_credits_earned_cents bigint not null default 0,
+>   total_credits_clawed_back_cents bigint not null default 0,
+>   created_at timestamptz not null default now()
+> );
+>
+> create index idx_referral_codes_code on public.referral_codes(code);
+>
+> create table public.referrals (
+>   id uuid primary key default gen_random_uuid(),
+>   referrer_user_id uuid not null references public.profiles(id) on delete cascade,
+>   referred_user_id uuid not null references public.profiles(id) on delete cascade,
+>   referral_code text not null,
+>   status text not null default 'pending' check (status in (
+>     'pending',
+>     'signup_complete',
+>     'trial_started',
+>     'first_payment',
+>     'rewarded',
+>     'clawed_back',
+>     'fraud_blocked',
+>     'cap_exceeded'
+>   )),
+>   signup_at timestamptz,
+>   trial_started_at timestamptz,
+>   first_payment_at timestamptz,
+>   reward_applied_at timestamptz,
+>   reward_amount_cents bigint,
+>   reward_stripe_credit_id text,
+>   referred_user_discount_applied text,
+>   referred_user_discount_amount_cents bigint,
+>   clawback_reason text,
+>   clawed_back_at timestamptz,
+>   fraud_flags jsonb,
+>   created_at timestamptz not null default now(),
+>   updated_at timestamptz not null default now(),
+>   unique (referrer_user_id, referred_user_id)
+> );
+>
+> create index idx_referrals_referrer on public.referrals(referrer_user_id);
+> create index idx_referrals_referred on public.referrals(referred_user_id);
+> create index idx_referrals_status on public.referrals(status);
+> create index idx_referrals_first_payment_at on public.referrals(first_payment_at) where status in ('rewarded', 'clawed_back');
+>
+> alter table public.profiles add column referred_by_user_id uuid references public.profiles(id);
+> alter table public.profiles add column signup_referral_code text;
+> ```
+>
+> Add RLS: users can read their own referral_codes row and their own referrals (where referrer_user_id = auth.uid() OR referred_user_id = auth.uid()). Admins can read all.
+>
+> ### Code generation logic
+>
+> When a new user is created (via the existing `profiles` insert trigger), automatically create their referral_codes row with a generated code. Format: `{first_name_or_first_8_of_email}-{4_random_alphanumeric}` lowercased, with conflicts auto-resolved by appending an extra character. Example: `tokunbo-7k2x`, `oludayo-m4n9`.
+>
+> Code length: 8-15 characters, lowercase, alphanumeric + hyphens only. Must be URL-safe.
+>
+> ### Server actions
+>
+> Create `/actions/referrals.ts` exporting:
+>
+> - `getReferralStats(userId)` — returns code, share link, rolling 12-month stats, lifetime stats, current cap status
+> - `applyReferralCodeAtSignup(userId, code)` — called during signup if `?ref=...` query param present; validates code exists, sets `profiles.signup_referral_code` and `profiles.referred_by_user_id`, creates `referrals` row with status `signup_complete`
+> - `triggerReferralReward(referralId)` — called by Stripe webhook on first payment; runs fraud checks, checks cap, applies Stripe credit to referrer, applies 50% discount coupon to referred user, updates referrals row to `rewarded`
+> - `clawbackReferralReward(referralId, reason)` — called by Stripe webhook on refund; reverses credit, updates row to `clawed_back`
+>
+> ### Fraud detection
+>
+> Before applying a reward in `triggerReferralReward`, run these checks. Any failure → status `fraud_blocked`, no reward applied to either party, admin notified via Logsnag:
+>
+> 1. **Same payment method as referrer.** Compare Stripe `payment_method.fingerprint` between referrer and referred user accounts. Match → block.
+>
+> 2. **Same IP within 24h of referrer's last login.** Check `auth_logs` table (assumed to exist via Supabase Auth audit logs). Recent same-IP login → flag for admin review (not auto-blocked, since shared networks happen).
+>
+> 3. **Email pattern abuse.** Reject `+\d+@`-style aliasing of the same base email (e.g. `tokunbo+1@gmail.com` → `tokunbo+2@gmail.com`). Match → block.
+>
+> 4. **Self-referral.** If referrer_user_id == referred_user_id → block (shouldn't be possible via UI but check defensively).
+>
+> 5. **Cap check.** Count `referrals` rows where `referrer_user_id` matches AND status in (`rewarded`, `clawed_back`) AND `first_payment_at > now() - interval '12 months'`. If count >= 6 → set status `cap_exceeded`, notify referrer in-app, still apply 50% discount to referred user (their experience isn't penalised).
+>
+> ### Stripe integration
+>
+> Two Stripe operations during `triggerReferralReward`:
+>
+> **For the referred user:** Create a one-time Stripe coupon (50% off, applies once) and attach to their next invoice. Use Stripe's `Coupons` API. Coupon ID format: `referral-{referral_id}` for traceability.
+>
+> **For the referrer:** Add credit to their Stripe customer balance using `customers.createBalanceTransaction` with negative amount (Stripe convention: negative balance = credit). Description: `"Referral reward: referred {referred_user_email}"`. Stripe automatically applies this credit to the next invoice generated for that customer.
+>
+> Stripe webhook additions to existing handler at `/app/api/webhooks/stripe/route.ts`:
+>
+> - On `invoice.payment_succeeded` for a non-trial invoice (first paid invoice for a referred user): look up `referrals` row by `referred_user_id`, call `triggerReferralReward(referralId)`
+> - On `charge.refunded` or `invoice.voided` within 30 days of first payment: look up `referrals` row, call `clawbackReferralReward(referralId, reason)`
+> - When applying any discount/coupon to an invoice: check `getActiveDiscounts(userId)` — if multiple discounts available, apply only the largest by first-month dollar saving. Implement this comparison in `/lib/stripe/discount-resolver.ts`.
+>
+> ### UI surfaces
+>
+> **`/app/(app)/referrals/page.tsx`** — main referrals dashboard:
+>
+> Editorial layout per FundedPal design system. Hero: Fraunces display-lg "Your referrals." with subtext "Help fellow prop traders survive their challenges. Get paid for it."
+>
+> Below hero, three sections:
+>
+> *Section 1: Your code and link*
+> - Code displayed in JetBrains Mono, large (mono-lg), with copy-to-clipboard button
+> - Full share link: `https://fundedpal.com/?ref={code}` with copy button
+> - Share message templates (4 variants the user can pick from):
+>   - "FundedPal stopped me from blowing my FTMO challenge twice this month. If you're trading prop accounts, it's worth trying. Here's 50% off your first month: {link}"
+>   - "If you're a prop trader, FundedPal is the platform that won't let you blow your account on stupid mistakes. Here's 50% off: {link}"
+>   - "I've been using FundedPal — it's the only trading platform with a Compliance Guardian that physically can't break your prop firm's rules. Try it: {link}"
+>   - Custom (user writes their own)
+> - Native share buttons for X (Twitter), WhatsApp, Telegram, Discord, copy
+>
+> *Section 2: Your stats*
+> - Rolling 12 months card: total signups, trial conversions, credits earned ($), cap usage (e.g. "4 of 6")
+> - Lifetime card: same metrics, all-time
+> - Editorial table of recent referrals (last 10): referred user (anonymised — first name + last initial), status, date, credit earned
+>
+> *Section 3: How it works*
+> - 4-step process explained editorially with FundedPal voice (no marketing fluff)
+> - Cap rules transparent: "After 6 paid referrals in a 12-month window, your link still works (your friends still get 50% off) but you stop earning credits until older referrals age out"
+> - Anti-fraud rules disclosed: same payment method/email aliases blocked
+>
+> **`/components/branded/ReferralBanner.tsx`** — discreet banner shown on dashboard for first 30 days post-signup:
+>
+> > "Tell other prop traders. Earn a free month for each one who joins. Get your link →"
+>
+> Champagne accent, dismissible, doesn't reappear if dismissed.
+>
+> **Profile edit page addition** — when entering a referral code post-signup (within first 7 days, before first payment), allow user to apply a code retroactively. Useful for users who signed up directly then heard about the program from a friend.
+>
+> ### Email notifications
+>
+> Add email templates (using existing Resend setup):
+>
+> - **Referrer: signup notification** — "{referred_user_first_name} just signed up using your code. They're in their 14-day trial."
+> - **Referrer: trial conversion notification** — "{referred_user_first_name} converted to paid. You've earned a $39 credit. (You're at 4 of 6 referrals this year.)"
+> - **Referrer: cap reached notification** — "You've maxed out referral credits for this year. Your link still works — your friends still get 50% off — but new referrals won't earn you credits until older ones age past 12 months."
+> - **Referred user: discount applied notification** — included in their existing welcome email when they signed up via referral
+>
+> ### Admin dashboard
+>
+> Add `/app/(app)/admin/referrals/page.tsx` (admin-only via `profiles.is_admin`):
+>
+> - List of fraud-flagged referrals awaiting review (status `fraud_blocked`)
+> - Click to see fraud_flags jsonb detail
+> - Manual approve/reject actions
+> - Stats: total referrals all-time, conversion rate, credits paid out, fraud rate
+>
+> ### Tests
+>
+> Unit tests for:
+> - Code generation (uniqueness, format, conflict resolution)
+> - Cap calculation (rolling 12-month window, edge cases at boundary)
+> - Fraud detection (each rule independently)
+> - Discount resolver (referral-only, promotion-only, both — bigger wins)
+> - Stripe webhook handlers (mocked Stripe events)
+> - Clawback logic (within 30 days vs after 30 days)
+>
+> Integration tests:
+> - Full happy path: user A signs up, gets code, user B signs up via code, user B trials, user B pays first invoice, user A gets credit
+> - Fraud path: same payment method blocks reward
+> - Cap path: 7th referral in 12 months gets `cap_exceeded`, referred user still gets discount
+> - Clawback path: refund within 30 days reverses credit; refund after 30 days does not
+>
+> ### Verification
+>
+> Verify end-to-end in Stripe test mode:
+> - Create user A, get their referral code
+> - Sign up user B via `/signup?ref={code}`, verify `profiles.referred_by_user_id` set correctly
+> - Complete user B's trial and first paid invoice (use Stripe test clock to fast-forward)
+> - Verify user A's Stripe customer balance shows $39 credit
+> - Verify user B's invoice shows 50% off
+> - Verify referral_codes counters incremented correctly
+> - Test refund within 30 days → credit reversed
+> - Test 7th referral → cap_exceeded status, user B still discounted
+
+**Prompt 35.7 — Refund policy and admin tooling**
+
+> Build the refund policy infrastructure. FundedPal has a deliberately strict no-refunds policy with narrow technical exceptions only. This prompt creates the policy document, public page, webhook handling for refund events, and admin tooling for processing the rare technical refunds.
+>
+> ### Policy (locked)
+>
+> **No refunds for subscription periods.** The 14-day trial provides meaningful evaluation time before any payment is taken. Once a user converts to a paid subscription, that period's payment is final and not refundable.
+>
+> **Only two refund-eligible situations:**
+>
+> 1. **Double charging** — same subscription period charged more than once due to system error
+> 2. **Technical billing errors** — wrong tier charged, charge processed after cancellation took effect, currency conversion errors, Stripe processing errors, or other verifiable billing system failures
+>
+> **Explicitly not refundable:**
+>
+> - Trading losses, blown accounts, failed prop firm challenges
+> - Prop firm account closures or rule violations
+> - Change of mind after first paid charge
+> - Dissatisfaction with signals, strategy decisions, or platform behaviour
+> - Inability to use the platform due to user-side issues (lost MT5 credentials, broken local PC, etc.)
+> - Any reason not falling into the two technical exceptions above
+>
+> This policy aligns with industry norms — every supported prop firm (FTMO, FundedNext, The Funded Trader, E8, Funded Trading Plus, Goat Funded Trader) operates similar no-refund policies on challenge fees. Users understand this convention.
+>
+> ### Database schema
+>
+> ```sql
+> create table public.refund_events (
+>   id uuid primary key default gen_random_uuid(),
+>   user_id uuid not null references public.profiles(id) on delete cascade,
+>   stripe_charge_id text not null,
+>   stripe_refund_id text not null unique,
+>   amount_refunded_cents bigint not null,
+>   currency text not null,
+>   refund_reason text not null check (refund_reason in (
+>     'double_charge',
+>     'wrong_tier',
+>     'post_cancellation',
+>     'currency_error',
+>     'stripe_processing_error',
+>     'other_technical'
+>   )),
+>   admin_notes text,
+>   processed_by uuid references public.profiles(id),
+>   processed_at timestamptz not null default now(),
+>   referral_clawback_triggered boolean not null default false,
+>   referral_clawback_id uuid references public.referrals(id),
+>   created_at timestamptz not null default now()
+> );
+>
+> create index idx_refund_events_user on public.refund_events(user_id);
+> create index idx_refund_events_processed_at on public.refund_events(processed_at);
+> ```
+>
+> Add RLS: users can read their own refund_events. Admins can read all and insert.
+>
+> ### Policy document
+>
+> Create `/content/refund-policy.md` with the following content (FundedPal voice, restrained editorial tone, no defensive language):
+>
+> ```markdown
+> # Refund Policy
+>
+> Last updated: [DATE]
+>
+> ## Our policy
+>
+> FundedPal does not offer refunds on paid subscription periods. Once your 14-day trial converts to a paid month, that month's payment is final.
+>
+> This is the same convention every prop firm operates under for challenge fees, and for the same reason: the product was delivered, the time was used, the service was rendered.
+>
+> ## What we will refund
+>
+> Two specific technical situations:
+>
+> **Double charging.** If our billing system charged you twice for the same subscription period, we'll refund the duplicate immediately.
+>
+> **Technical billing errors.** If you were charged at the wrong tier, charged after your cancellation took effect, or affected by a verifiable billing system error, we'll refund the affected amount.
+>
+> ## What we won't refund
+>
+> Anything else. Specifically including:
+>
+> - Trading losses or blown prop firm accounts
+> - Failed prop firm challenges
+> - Prop firm account closures or rule violations
+> - Change of mind after your first paid charge
+> - Dissatisfaction with signals or strategy decisions
+> - Inability to use the platform due to issues on your side (lost broker credentials, hardware problems, etc.)
+>
+> The 14-day trial exists so you can evaluate FundedPal thoroughly before paying. We encourage you to use it.
+>
+> ## How to request a technical refund
+>
+> If you believe you've been affected by a double charge or technical billing error, contact support@fundedpal.com with:
+>
+> - The email address on your account
+> - The date and amount of the charge in question
+> - A brief description of what happened
+>
+> We'll verify the issue and process eligible refunds within 5 business days. Refunds appear on the original payment method within 5-10 business days depending on your bank.
+>
+> ## Cancellations
+>
+> You can cancel your subscription at any time from the Billing page. Cancellation takes effect at the end of your current billing period — you keep access through the period you've already paid for, and you won't be charged again.
+>
+> No refund is issued for the unused portion of a paid period.
+>
+> ## Tier changes
+>
+> Upgrades take effect immediately and are pro-rated. If you upgrade from Trader to Pro mid-month, you're charged the prorated difference for the remainder of the period.
+>
+> Downgrades take effect at the start of your next billing period. Your current paid period continues at the higher tier until it ends.
+>
+> ## Disputes
+>
+> If you disagree with a refund decision, contact support@fundedpal.com to discuss. We aim to be reasonable; we also stand by the policy.
+>
+> Initiating a chargeback through your bank without first contacting us may result in your FundedPal account being suspended pending resolution.
+>
+> ## Questions
+>
+> support@fundedpal.com
+> ```
+>
+> ### Public refund policy page
+>
+> Build `/app/(legal)/refund-policy/page.tsx` rendering the markdown content. Editorial layout per FundedPal design system, max-width 680px, generous whitespace. Same template as Terms of Service and Privacy Policy pages.
+>
+> Add link to refund policy in:
+> - Footer of marketing pages (already designed)
+> - Stripe checkout page footer (the small print)
+> - Billing settings page within the app
+> - Email footer of all transactional emails
+>
+> ### Webhook handler updates
+>
+> Update `/app/api/webhooks/stripe/route.ts` to handle refund events:
+>
+> When `charge.refunded` fires:
+>
+> 1. Look up the user via `stripe_customer_id`
+> 2. Insert a `refund_events` row capturing the Stripe refund ID, amount, currency, and a default reason of `'other_technical'` (admin can edit reason later via admin tool)
+> 3. If the refund is for a charge linked to an active subscription period that the user is currently in:
+>    - Cancel the subscription at end of current period (don't extend access)
+>    - If the refund covers the entire current period, mark subscription_status as 'cancelled' immediately and end access
+> 4. **Trigger referral clawback** if a `referrals` row exists where `referred_user_id` matches AND `first_payment_at` is within 30 days AND status is `'rewarded'`. Call the existing `clawbackReferralReward(referralId, 'refund_within_30d')` function from Prompt 35.5.
+> 5. Set `refund_events.referral_clawback_triggered = true` and `referral_clawback_id` if applicable
+> 6. Log the event to PostHog: `event = 'subscription_refunded'` with reason and amount
+> 7. Send Logsnag alert to admin channel — refunds are rare enough to warrant attention
+>
+> ### Admin refund tooling
+>
+> Build `/app/(app)/admin/billing/page.tsx` (admin-only via `profiles.is_admin`):
+>
+> Layout: editorial table of recent payments and refunds, with search/filter.
+>
+> **Search section:**
+> - Search by user email, Stripe customer ID, or charge ID
+> - Date range filter
+> - Refund status filter (all / refunded / not refunded)
+>
+> **Payment list:**
+> - Borderless rows, hover lifts row, columns:
+>   - User (email)
+>   - Date — body-sm bone-muted
+>   - Amount — JetBrains Mono with currency
+>   - Tier — badge in caption
+>   - Status — paid / refunded
+>   - Action — "Process refund" button (only on non-refunded paid charges)
+>
+> **Process refund modal:**
+> - Trigger by clicking "Process refund" on a payment
+> - Modal shows charge details
+> - Reason selector (required) — dropdown of the 6 reason codes from the schema
+> - Admin notes field (optional)
+> - Refund amount (default to full charge amount, editable for partial refunds in rare cases)
+> - Confirmation step: "This will refund $X to {user email}. The user will be notified by email. This action cannot be undone."
+> - On confirm: call Stripe `refunds.create` with the charge ID, populate `admin_notes`, set `processed_by` to current admin's user_id
+>
+> **Refund analytics card:**
+> - Total refunds last 30 days (count and amount)
+> - Total refunds last 12 months
+> - Breakdown by reason code (which technical issues are most common)
+> - Refund rate as % of total charges (should be < 1% under healthy operation)
+>
+> ### Email notification
+>
+> When a refund is processed, send email to the affected user via Resend:
+>
+> Subject: "Your FundedPal refund has been processed"
+>
+> Body:
+> ```
+> Hi {first_name},
+>
+> We've processed a refund of ${amount} {currency} to your original payment method.
+>
+> Reason: {human_readable_reason}
+>
+> Refunds typically appear within 5-10 business days depending on your bank.
+>
+> If you have questions, reply to this email.
+>
+> — The FundedPal team
+> ```
+>
+> ### Server actions
+>
+> Create `/actions/refunds.ts` exporting:
+>
+> - `processRefund(chargeId, reason, adminNotes, amountCents?)` — admin-only server action that calls Stripe, inserts refund_events, triggers webhook flow naturally
+> - `getRefundStats(dateRange)` — for the analytics card
+> - `searchPayments(query, filters)` — for the admin search
+>
+> All admin server actions verify `profiles.is_admin = true` server-side. Reject with 403 otherwise.
+>
+> ### Tests
+>
+> - Unit tests for the refund webhook flow (mocked Stripe events)
+> - Integration test: create payment in Stripe test mode, process refund via admin tool, verify subscription cancelled, verify referral clawback fires if applicable, verify email sent
+> - Test that non-admin users cannot access `/admin/billing` (returns 403)
+> - Test that the public refund policy page renders correctly
+>
+> ### Verification
+>
+> - `/legal/refund-policy` renders the policy correctly
+> - Footer links to refund policy work from marketing site, app, and emails
+> - Admin can search for a charge, process a refund, see it logged in refund_events
+> - User receives email notification when refund processed
+> - Referral clawback fires automatically when refund occurs within 30 days of first payment
+> - PostHog event `subscription_refunded` logged on every refund
+> - Logsnag admin alert fires on every refund
+> - Non-admin users get 403 on admin billing routes
+
 **Prompt 36 — Tier gating**
 
 > Implement tier gating. Create `/lib/tier.ts` exporting:
@@ -1108,7 +1612,7 @@ fundedpal/
 
 ## 6. Definition of Done — v1 Launch Checklist
 
-- [ ] All 38 prompts executed and verified
+- [ ] All 40 prompts executed and verified
 - [ ] Lighthouse 90+ on dashboard, 95+ on marketing
 - [ ] Stripe live mode with all 3 plans configured
 - [ ] All 6 supported firms with manually-curated rule profiles

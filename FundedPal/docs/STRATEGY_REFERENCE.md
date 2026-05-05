@@ -12,9 +12,9 @@ If you read it carefully, you'll understand FundedPal better than most traders u
 
 FundedPal trades using **Smart Money Concepts and Inner Circle Trader methodology** — a school of technical analysis that looks for spots where institutional traders likely have unfilled orders, waits for retail traders to push price into those spots, then takes trades expecting the institutions to defend their levels.
 
-The platform is **selective by design**. A typical week produces 1-3 high-quality setups per instrument. We don't trade for action. We trade when six specific factors align.
+The platform is **selective by design**. A typical week produces 1-3 high-quality setups per instrument. We don't trade for action. We trade when the market regime is favourable AND when five specific factors align.
 
-Position sizing is **risk-based**, not lot-based. Every trade risks a fixed percentage of your starting balance regardless of stop distance. The Compliance Guardian rejects any trade that would breach your prop firm's rules — or your own risk budget.
+Position sizing is **risk-based**, not lot-based. Every trade risks a fixed percentage of your *current equity* — naturally protecting accounts during drawdown and compounding during winning streaks. The Compliance Guardian rejects any trade that would breach your prop firm's rules — or your own risk budget.
 
 If that sounds restrained, that's the point. **FundedPal is built for traders who'd rather be approved than apologise.**
 
@@ -86,7 +86,7 @@ When price sweeps through a liquidity pool — taking out the stops — and imme
 
 ### Optimal Trade Entry (OTE)
 
-Once price has returned to a valid order block or FVG, the entry trigger is when price **retraces 62%-79% into the zone**. This is a Fibonacci-based concept rooted in how institutions tend to fill the remainder of their orders before the next impulsive move.
+Once price has returned to a valid order block or FVG, the entry trigger considers **how deep the retracement has gone into the zone**. Rather than a binary trigger (e.g. only between 62-79%), FundedPal uses a continuous retracement score that peaks around 70% and tapers off toward 50% (too shallow) and 90% (too deep, likely to fail). This avoids artificial cliff-edges and reflects the reality that "good retracement" is a smooth gradient, not a hard zone.
 
 The OTE zone is where high-probability entries happen. Outside it, the trade has worse risk-to-reward.
 
@@ -105,22 +105,45 @@ Outside these windows, the engine is silent. This is deliberate — most failed 
 
 ## How signals form: the confluence engine
 
-A trade doesn't trigger because one pattern appears. It triggers when **multiple patterns align**.
+A trade doesn't trigger because one pattern appears. It triggers when **multiple patterns align** — and only when the market regime is favourable.
 
-FundedPal scores six factors on every potential setup, totalling out of 100 points:
+### The regime pre-condition
+
+Before any confluence scoring, FundedPal checks the current market regime using ADX (a standard trend-strength indicator). The classification:
+
+- **Trending** (ADX > 25) — normal scoring applies
+- **Transitional** (ADX 20-25) — confluence threshold raised by 5 points (more selective)
+- **Ranging** (ADX < 20) — no signals generated regardless of confluence
+
+This is important because SMC/ICT patterns work much better in trending conditions than in chop. By filtering out ranging markets entirely, FundedPal avoids one of the biggest sources of false signals.
+
+### The 5 confluence factors
+
+When the regime allows, FundedPal scores 5 orthogonal factors totalling 100 points:
 
 | Factor | Points | What it tests |
 |---|---|---|
 | Higher timeframe bias | 20 | Is the daily/4h structure aligned with the trade direction? |
-| Proximity to valid POI | 20 | Is price at a fresh order block or unfilled FVG? |
-| Liquidity sweep just occurred | 15 | Did price just take out equal highs/lows before reversing? |
-| In active killzone | 15 | Is the current session a high-probability time? |
-| OTE level reached | 15 | Did price retrace 62-79% into the POI? |
-| Structure shift confirmed | 15 | Has BOS or CHoCH printed on the entry timeframe? |
+| Location quality | 25 | Is price at a fresh point of interest (order block, breaker, FVG) AND at a high-quality retracement depth? Combined score from both. |
+| Liquidity event | 15 | Did price just sweep equal highs/lows or run stops with a strong rejection wick? |
+| Active killzone | 15 | Is the current session a high-probability time? |
+| Structure shift | 25 | Has BOS or CHoCH printed on the entry timeframe? Downweighted to 10 if a liquidity sweep already scored (because sweeps frequently cause structure shifts). |
 
 **The threshold for generating a signal is 70 out of 100** by default. This adjusts based on which phase your account is in (more on that below).
 
 Most setups score in the 50-65 range. Those don't trigger. Only the cleanest setups — where the institutional thesis is unambiguous — make it through.
+
+### Why these 5 factors and not more
+
+Earlier versions of the confluence engine used 6 factors that turned out to be partially correlated. Liquidity sweeps frequently cause structure shifts. Order block proximity and OTE retracement are mathematically overlapping conditions. Counting these separately overstated confidence.
+
+The current 5-factor model:
+- **Merged** location quality (POI proximity + retracement depth) into a single score
+- **Replaced** binary OTE detection (62-79%) with a continuous retracement score that peaks at 70% and tapers at the edges
+- **Added** the regime pre-condition to suppress signals in choppy markets
+- **Downweights** structure shift when a liquidity sweep already scored, to avoid double-counting correlated events
+
+This is more rigorous than the earlier model, while remaining a rule-based system you can audit and reason about.
 
 ---
 
@@ -130,50 +153,52 @@ Let's walk through a complete signal so you can see exactly how this plays out.
 
 **Setup on EUR/USD, 1-hour chart, London Open killzone (3:15 EST):**
 
+**Step 0: Regime check.**
+ADX(14) on the 1-hour reads 28 — the market is trending. Signals are enabled.
+*Threshold: 70 (no transitional adjustment needed)*
+
 **Step 1: Higher timeframe bias check.**
 Daily structure shows higher highs and higher lows over the past two weeks. Bias is bullish.
 *Score: +20 points*
 
-**Step 2: Point of interest identification.**
-Yesterday at 14:00 EST, an aggressive bullish move broke the previous structure to the upside. The last bearish candle before that move ranged from 1.0820 to 1.0835 — that's a fresh bullish order block. Price has been trading higher since but hasn't returned to retest it.
-*Score: +20 points*
+**Step 2: Location quality (POI + retracement).**
+Yesterday at 14:00 EST, an aggressive bullish move broke structure to the upside. The last bearish candle before that move ranged from 1.0820 to 1.0835 — that's a fresh bullish order block, and it sits at the 70% retracement of the previous bullish leg (the peak of the retracement quality curve). Price is currently at 1.0828, inside the order block.
+*Score: +25 points (full marks — fresh POI at peak retracement)*
 
-**Step 3: Recent price action.**
-During the Asian session, price drifted lower toward the order block. Just before London open, price spiked down to 1.0815 — taking out the equal lows that had formed at 1.0820 over the previous 12 hours. That's a liquidity sweep.
+**Step 3: Liquidity event.**
+During the Asian session, price drifted lower toward the order block. Just before London open, price spiked down to 1.0815 — taking out equal lows that had formed at 1.0820, then closed back inside the range with a strong rejection wick.
 *Score: +15 points*
 
-**Step 4: Killzone confirmation.**
+**Step 4: Active killzone.**
 Time is 3:15 EST. London Open killzone is active.
 *Score: +15 points*
 
-**Step 5: OTE check.**
-The 62-79% retracement of the previous bullish leg lands at 1.0822-1.0830 — exactly inside the order block. Price is currently at 1.0828.
-*Score: +15 points*
-
-**Step 6: Structure shift on entry timeframe.**
+**Step 5: Structure shift on entry timeframe.**
 A small bearish move just shifted to bullish — the first higher low formed at 1.0825. Mini-CHoCH on the 1-hour.
-*Score: +15 points*
+*Score: +10 points (downweighted from 25 because liquidity event already scored — sweeps frequently cause structure shifts; counting both fully would double-count)*
 
-**Total confluence: 100 out of 100. Signal generated.**
+**Total confluence: 85 out of 100. Above threshold (70). Signal generated.**
 
 The signal:
 - **Side:** Buy
-- **Entry:** 1.0828 (current price within OTE zone)
+- **Entry:** 1.0828 (current price within retracement zone)
 - **Stop loss:** 1.0810 (just below the liquidity sweep low — 18 pips)
 - **Take profit:** 1.0900 (next major liquidity pool above — 72 pips)
 - **Risk:Reward:** 1:4
 
-If your account is FTMO Phase 1 $100k with FundedPal default risk settings (0.875% per trade), the position size is calculated as:
+If your account is FTMO Phase 1 $100k currently sitting at $98,500 equity (had a small loss earlier this week) with FundedPal default risk settings (0.875% per trade), the position size is calculated as:
 
 ```
-position size = (0.875% × $100,000) / (18 pips × $10 per pip)
-              = $875 / $180
-              = 4.86 lots
+position size = (0.875% × $98,500) / (18 pips × $10 per pip)
+              = $861.88 / $180
+              = 4.79 lots
 ```
 
-Rounded down to your broker's lot step (0.01) = **4.86 lots**.
+Rounded down to your broker's lot step (0.01) = **4.79 lots**.
 
-This trade risks $875 and targets $3,500. If it hits, your account moves from $100,000 to $103,500. If it loses, your account moves to $99,125 — still well clear of FTMO's $5,000 daily loss limit.
+Notice the sizing is calculated against your *current equity* of $98,500, not the original starting balance of $100,000. This is intentional — your position is automatically smaller because you're already slightly drawn down. As your equity recovers and grows, position sizes will scale up naturally.
+
+This trade risks $862 and targets $3,447. If it hits, your equity moves from $98,500 to $101,947. If it loses, your equity moves to $97,638 — still well clear of FTMO's daily loss limit.
 
 ---
 
@@ -219,25 +244,34 @@ You can override these defaults within hardcoded ceilings (per-trade risk can ne
 
 ---
 
-## Position sizing — risk-based, not lot-based
+## Position sizing — risk-based, equity-aware
 
 Most retail bots use fixed lot sizes ("always 0.5 lots"). FundedPal doesn't.
 
-Every trade is sized so that, if your stop loss hits, you lose **a fixed percentage of your starting balance** — regardless of where the stop sits.
+Every trade is sized so that, if your stop loss hits, you lose **a fixed percentage of your current equity** — regardless of where the stop sits.
 
 The formula:
 
 ```
-position size = (per_trade_risk_pct × starting_balance) / (stop_distance_in_pips × pip_value_in_account_currency)
+position size = (per_trade_risk_pct × current_equity) / (stop_distance_in_pips × pip_value_in_account_currency)
 ```
 
 This means:
 
 - A trade with a tight stop produces a **larger** position
 - A trade with a wide stop produces a **smaller** position
-- The dollar risk per trade is constant, regardless of setup
+- The dollar risk per trade is a constant percentage of your *current* account size
 
-This is how disciplined institutional desks size. It's mathematically the right approach for asymmetric risk-reward strategies.
+### Why equity-based, not starting-balance-based
+
+Most platforms calculate risk against your starting account balance. FundedPal calculates against your current equity. This sounds minor; it's actually one of the most important protective decisions in the system.
+
+When equity equals starting balance (day one of the challenge), the math is identical. But when equity diverges:
+
+- **During drawdown**, position sizes naturally shrink. You're trading a smaller account, so the system risks a smaller dollar amount per trade. Drawdown can't compound on itself the way it does with starting-balance sizing.
+- **During winning streaks**, position sizes naturally grow. The strategy's edge compounds against the larger equity base.
+
+This is how disciplined institutional desks size. It's mathematically the right approach for asymmetric risk-reward strategies trading inside drawdown constraints.
 
 The Compliance Guardian also caps position size at your firm's lot limits — if a calculation would exceed FTMO's 30 lot per position cap, the trade is automatically reduced or rejected.
 
@@ -245,13 +279,13 @@ The Compliance Guardian also caps position size at your firm's lot limits — if
 
 ## The Risk Budget Layer
 
-Even with risk-based sizing, FundedPal adds a second layer of protection: **soft caps**.
+Even with equity-based sizing, FundedPal adds a second layer of protection: **soft caps**.
 
 Your prop firm allows a 5% daily loss. FundedPal stops trading at 3.5%. The 1.5% gap is your buffer for slippage, spread, and the news event nobody saw coming.
 
 Every trade is evaluated against three soft caps before reaching your account:
 
-**Per-trade risk** — the worst-case loss of this single trade as a percentage of starting balance. Hardcoded ceiling: 1%. Default: 0.875% on Phase 1, 0.5% on Phase 2, 0.25% on Funded.
+**Per-trade risk** — the worst-case loss of this single trade as a percentage of current equity. Hardcoded ceiling: 1%. Default: 0.875% on Phase 1, 0.5% on Phase 2, 0.25% on Funded.
 
 **Daily soft cap** — your total daily exposure (realised losses today + worst-case from open positions + worst-case from this proposed trade). Hardcoded ceiling: 75% of your firm's hard rule. Default: 70%.
 
@@ -305,7 +339,7 @@ Honesty matters here. Let's be precise about what this strategy can and can't do
 
 ### What the strategy does well
 
-**Pass prop firm challenges with good probability** when you let it run within its parameters. Backtests on EUR/USD, GBP/USD, and XAU/USD over the past three years suggest a 50-60% pass rate for Phase 1 within 30 days using default settings. The industry average for self-directed traders is roughly 10-15%.
+**Pass prop firm challenges with materially better odds than self-directed trading.** The industry pass rate for self-directed prop traders is roughly 10-15%. FundedPal's structural risk discipline alone — the soft caps, max-trades-per-day enforcement, killzone scheduling, and regime filtering — meaningfully shifts those odds in your favour, before any consideration of strategy edge. Specific pass-rate numbers depend heavily on instrument, market conditions, and friction modelling assumptions, so we don't quote them as guarantees. What we do guarantee is that the platform refuses to let you blow accounts the obvious ways.
 
 **Compound funded accounts steadily** in preservation mode. The Funded-phase aggression curve targets ~3-5% monthly returns with drawdowns capped at 4-5%. This is the profile prop firms want to see continue indefinitely.
 
@@ -317,13 +351,13 @@ Honesty matters here. Let's be precise about what this strategy can and can't do
 
 **Beat the market in absolute return terms.** It's not trying to. It deliberately underperforms maximum-return strategies in exchange for better drawdown control.
 
-**Work in all market conditions.** SMC/ICT is historically weakest during low-volatility, range-bound periods. Some weeks, no trades trigger. This is the engine being correct, not broken.
+**Work in all market conditions.** SMC/ICT is historically weakest during low-volatility, range-bound periods. FundedPal addresses this directly with the regime filter — when ADX shows the market is ranging, no signals are generated at all. Some weeks, this means no trades trigger. This is the engine being correct, not broken.
 
 **Replace your judgment entirely.** A trader who watches the engine generate only 2 signals per week will eventually want to take their own ideas. FundedPal supports manual orders — but those orders go through the same Compliance Guardian. The engine is the disciplined floor, not the only path.
 
 ### What might surprise you
 
-**Win rate is moderate** — roughly 45-55% in backtests. This isn't a 90% win rate system. The edge comes from asymmetric risk-reward (typically 1:2 to 1:4), not from being right most of the time.
+**Win rate is moderate** — roughly 40-55% in backtests with realistic friction modelling. This isn't a 90% win rate system. The edge comes from asymmetric risk-reward (typically 1:2 to 1:4), not from being right most of the time. Backtests without friction modelling can show inflated win rates that don't survive contact with real markets — FundedPal's backtest module always includes slippage, spread variation, and execution latency by default.
 
 **Profit factor is the metric that matters.** Default backtests show profit factors of 1.6-2.2. That's healthy but not extraordinary. You're paying for consistency, not magic.
 
@@ -337,16 +371,23 @@ Honesty matters here. Let's be precise about what this strategy can and can't do
 
 For traders who want to see exactly how decisions are made. These are the engine's default values; some are configurable in your settings.
 
-### Confluence scoring weights
+### Regime filter (pre-condition)
 
-| Factor | Weight |
-|---|---|
-| Higher timeframe bias | 20 |
-| POI proximity | 20 |
-| Liquidity sweep | 15 |
-| Active killzone | 15 |
-| OTE level reached | 15 |
-| Structure shift confirmed | 15 |
+| ADX value | Regime | Effect on signals |
+|---|---|---|
+| ADX < 20 | Ranging | No signals generated |
+| ADX 20-25 | Transitional | Confluence threshold raised by 5 points |
+| ADX > 25 | Trending | Normal scoring applies |
+
+### Confluence scoring weights (5 factors)
+
+| Factor | Weight | Notes |
+|---|---|---|
+| Higher timeframe bias | 20 | Daily/4h structure direction |
+| Location quality | 25 | Merged: 60% POI presence + 40% retracement score (continuous, peaks at 70%) |
+| Liquidity event | 15 | Sweep with strong rejection wick |
+| Active killzone | 15 | Within enabled session window |
+| Structure shift | 25 (or 10) | BOS/CHoCH on entry timeframe; downweighted to 10 if liquidity event already scored |
 
 ### Confluence thresholds by phase
 
@@ -356,6 +397,8 @@ For traders who want to see exactly how decisions are made. These are the engine
 | Phase 2 | 75 | 2R | 1 |
 | Funded | 85 | 3R | 1 (per day) |
 
+(Thresholds raised by 5 in transitional regime. No signals at all in ranging regime.)
+
 ### Default risk settings by phase
 
 | Phase | Per-trade risk | Daily soft cap (% of firm hard rule) | Max trades/day |
@@ -364,16 +407,20 @@ For traders who want to see exactly how decisions are made. These are the engine
 | Phase 2 | 20% of soft cap (max 1%) | 65% | 2 |
 | Funded | 15% of soft cap (max 1%) | 60% | 2 |
 
+(All percentages are of *current equity*, not starting balance.)
+
 ### Pattern detection parameters
 
 | Parameter | Value |
 |---|---|
 | Swing detection method | 5-bar fractal |
 | Order block displacement minimum | 2× previous candle range |
-| FVG fill threshold | 50% (midpoint) |
+| Order block compression filter | ≥3 candles below 1× ATR before displacement |
+| FVG fill threshold | 50% (midpoint, configurable per instrument) |
 | Liquidity tolerance — FX majors | 0.1 ATR |
 | Liquidity tolerance — metals | 0.15 ATR |
-| OTE retracement zone | 62%–79% |
+| Retracement score peak | 70% (continuous curve, score declines toward 50% and 90%) |
+| Regime classifier | ADX(14) on entry timeframe |
 
 ### Instrument specifications
 
@@ -393,13 +440,27 @@ For traders who want to see exactly how decisions are made. These are the engine
 | NY AM | 08:30–11:00 |
 | NY PM | 13:30–16:00 |
 
+### Backtest friction modelling (always applied)
+
+| Parameter | Value |
+|---|---|
+| Slippage — FX majors | 0.5 pips |
+| Slippage — JPY pairs | 1.0 pips |
+| Slippage — FX cross | 1.5 pips |
+| Slippage — gold | 3.0 pips |
+| Spread variation | 0.8× to 1.5× historical average |
+| News spread spike | 3× during high-impact events |
+| Execution latency | 200-500ms simulated |
+| Re-quote probability | 2% |
+
 ### Hardcoded ceilings (cannot be overridden)
 
 | Limit | Value |
 |---|---|
-| Maximum per-trade risk | 1% of starting balance |
+| Maximum per-trade risk | 1% of current equity |
 | Maximum daily soft cap | 75% of firm's hard rule |
 | Minimum stop distance | 5 pips (FX) / 0.5 ATR (others) |
+| No adaptive parameter tuning | Strategy parameters are stable; changes are deliberate version updates |
 
 ---
 
@@ -478,17 +539,21 @@ If the strategy enters an extended drawdown (over 5% on the journey), the dashbo
 
 ### How is the strategy validated?
 
-Pre-launch, the engine has been backtested against 3+ years of historical data on each supported instrument under each supported firm's rules. Sanity criteria for green-light launch:
+Pre-launch, the engine is backtested against 3+ years of historical data on each supported instrument under each supported firm's rules. Every backtest applies realistic friction (slippage, spread variation, execution latency, news blackouts) — without these, results are inflated and meaningless.
+
+Sanity criteria for green-light launch:
 
 - Signal frequency: 5-25 signals per instrument per quarter
-- Win rate: 40-65%
+- Win rate: 40-55% (after friction modelling)
 - Average reward: ≥1.5R
 - Maximum drawdown: <15%
-- Phase 1 pass rate: ≥40% within 30 days
+- Backtest must include slippage, spread, latency, and news blackout simulation
+
+We don't quote a specific Phase 1 pass rate as a marketing number because it depends heavily on instrument, market regime, and friction assumptions, and would mislead more than inform. What we commit to is honest backtesting infrastructure that produces results survivable in live trading.
 
 Post-launch, real-world performance is tracked and visible in your dashboard. If aggregate user metrics significantly diverge from backtested expectations, parameters will be reviewed.
 
-We don't claim historical performance guarantees future results. We do claim that the methodology is rigorously defined and the parameters are honestly published.
+We don't claim historical performance guarantees future results. We do claim that the methodology is rigorously defined, the parameters are honestly published, and our backtests model the friction that real markets will apply.
 
 ---
 

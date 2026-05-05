@@ -20,11 +20,13 @@ Most prop accounts blow not because the strategy was wrong, but because of reven
 
 When building any feature that touches risk, position sizing, or order execution, these constraints are non-negotiable:
 
-- **Per-trade risk cannot exceed 1% of starting balance.** Hardcoded ceiling. No setting, no override, no premium tier unlocks more.
+- **Per-trade risk cannot exceed 1% of current equity.** Hardcoded ceiling. No setting, no override, no premium tier unlocks more.
+- **Position sizing uses current equity, not starting balance.** This means position sizes naturally shrink during drawdown (protecting weakening accounts) and grow during winning streaks (compounding edge). Mathematically equivalent to starting balance when equity = starting balance, but materially safer when equity diverges. Use `current_equity_cents` in every position sizing calculation.
 - **Daily soft cap cannot exceed 75% of the firm's hard rule.** If FTMO allows 5% daily loss, FundedPal stops trading at 3.75%. The remaining 1.25% is a buffer for slippage, spread, and gaps.
 - **Override features always carry friction.** Cooldown timers, confirmation modals, type-to-confirm. If a user wants to do something risky, the path is deliberately slower than the path to do something safe.
 - **The Compliance Guardian is the source of truth.** Every order — manual, signal-based, backtested — runs through it. No bypass routes for "advanced users" or "Elite tier".
-- **Position sizing is risk-based, never lot-based.** Position size is computed from the per-trade risk percentage and the distance to stop loss. Never a fixed lot.
+- **Position sizing is risk-based, never lot-based.** Position size is computed from the per-trade risk percentage, current equity, and the distance to stop loss. Never a fixed lot.
+- **No adaptive parameter tuning.** The strategy engine does not auto-adjust thresholds, weights, or risk parameters based on recent performance. Stable rule-based behaviour is more valuable than marginal performance gains from adaptation. Parameter changes are deliberate spec updates with version bumps, not runtime drift.
 
 ### Features deliberately not built
 

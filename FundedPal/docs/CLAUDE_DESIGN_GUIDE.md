@@ -192,12 +192,13 @@ Maps to BUILD_SPEC.md Prompts 11, 24, 31, 32.
 
 ### Stage 5 — Settings, billing, admin
 
-Maps to BUILD_SPEC.md Prompts 18 (risk settings), 30 (killzones), 35 (billing), 33 (admin rule changes).
+Maps to BUILD_SPEC.md Prompts 18 (risk settings), 30 (killzones), 35 (billing), 35.5 (referrals), 33 (admin rule changes).
 
 - Settings (Profile, Risk, Killzones, Notifications, Connections, Security)
 - Risk budget settings page
 - Connect-account flow with journey detection
 - Billing
+- Referrals (user-facing share dashboard)
 - Admin rule change review (admin role only)
 
 ---
@@ -575,6 +576,98 @@ For each major surface, here's the Claude Design prompt to use. After the setup 
 >
 > Explanatory copy: "These limits exist because most prop accounts blow not from the strategy being wrong, but from a single oversized trade. The bounds above cannot be raised — that's intentional."
 
+### Referrals page
+
+> Design /referrals — the user-facing referral dashboard where traders find their share link, track conversions, and see credits earned.
+>
+> This is a community-growth surface, not a marketing pitch. The user already pays for FundedPal — they're here to share it with others, not to be sold on it. Tone is utility-first with subtle warmth, not aggressive growth-hacking.
+>
+> Layout: editorial single-column, max-width 920px (slightly wider than dashboards because of the stats cards).
+>
+> **Hero section:**
+> - Fraunces display-lg: "Your referrals."
+> - Subhead in body-lg, max 600px: "Help fellow prop traders survive their challenges. Get paid for it."
+> - No CTA in the hero — the action is below.
+>
+> **Section 1: Your code and link**
+> Card with --ink-lift-1 background, generous padding (32px desktop).
+> - Caption uppercase Switzer at top: "YOUR REFERRAL CODE"
+> - Code displayed in JetBrains Mono mono-lg (e.g. "tokunbo-7k2x"), with copy-to-clipboard button to its right
+> - Below code: full share link in body-sm bone-muted, also with copy button (e.g. "fundedpal.com/?ref=tokunbo-7k2x")
+> - Below link: row of share buttons — X (Twitter), WhatsApp, Telegram, Discord, generic copy. Use Lucide icons at 20px in --bone-muted, hover lifts to --bone.
+>
+> **Section 2: Share message picker**
+> Card showing 4 message templates the user can pick from:
+> - Three pre-written variants (radio-card style — clicking selects that one)
+> - One "Custom" option that expands to a textarea where they can write their own
+> - Each variant shows the actual message in body in --bone, with subtle 1px border in --border around each card
+> - Selected variant gets 1px champagne border
+> - "Copy with link" button below — copies the selected message with the link substituted in
+>
+> **Section 3: Your stats**
+> Two side-by-side cards (4 columns each in 8-column inner grid):
+>
+> *Rolling 12 months card:*
+> - Caption: "ROLLING 12 MONTHS"
+> - Big editorial number in Fraunces display-lg JetBrains Mono: total credits earned in dollars (e.g. "$117")
+> - Below: 4 stat rows
+>   - Signups: count
+>   - Trial conversions: count
+>   - Paid conversions: count
+>   - Cap usage: "3 of 6" — small horizontal progress bar showing usage toward 6-referral cap
+> - When cap is reached: subtle banner "You've maxed out for this year. Your link still works — friends still get 50% off."
+>
+> *Lifetime card:*
+> - Caption: "LIFETIME"
+> - Big editorial number: total credits earned all-time
+> - Below: 3 stat rows (signups, trial conversions, paid conversions)
+>
+> **Section 4: Recent referrals**
+> Editorial table, last 10 referrals.
+> - Borderless rows, hover lifts row, columns:
+>   - Referred user — first name + last initial only (privacy)
+>   - Status — badge: "Trial active" / "Paid" / "Refunded" / "Cap exceeded" — sage/teal/terracotta/bone-muted respectively
+>   - Date — body-sm bone-muted
+>   - Credit earned — JetBrains Mono in sage if positive, bone-muted if zero
+> - If empty: editorial empty state with Fraunces heading-lg "No referrals yet." and brief instructional body.
+>
+> **Section 5: How it works**
+> Card with subtle --ink-lift-1 background. Editorial breakdown:
+> - Fraunces heading-md: "How FundedPal referrals work"
+> - 4-step explanation in body, no bullet points — written as flowing prose paragraphs
+> - Step 1: Share your link with prop traders you know
+> - Step 2: When they sign up and complete their first paid month, you both win
+> - Step 3: They get 50% off their first paid month. You get a credit equal to your subscription tier.
+> - Step 4: Refer up to 6 paid users in a 12-month rolling window. Past that, your link still works — your friends still get 50% off — but new referrals stop earning credits until older ones age out.
+> - Below: small print in body-sm bone-muted noting the 30-day clawback rule and fraud detection.
+>
+> Use the FundedPal design system. Generous whitespace between sections (64px desktop, 48px mobile).
+>
+> **Important tone note:** This page is not a marketing pitch. The user is already paying for FundedPal. The page should feel like a useful internal dashboard, not a "refer friends, get rewards!" promotional page. Avoid growth-hack vocabulary. Use the same restrained editorial voice as the rest of the app.
+
+### Referral banner component (dashboard)
+
+> Design `<ReferralBanner />` — a discreet banner shown on the multi-account dashboard for the first 30 days post-signup, encouraging users to share their referral link.
+>
+> Layout: thin horizontal banner, full width of dashboard content area, sits below the dashboard hero and above the 12-column grid.
+>
+> Visual:
+> - 1px subtle dashed border in --champagne-dim
+> - --ink-lift-1 background
+> - Padding 16px vertical, 24px horizontal
+> - Subtle Lucide "share" icon at 18px in --champagne to the left
+> - Body text in body-sm: "Tell other prop traders. Earn a free month for each one who joins."
+> - Right side: "Get your link" ghost button linking to /referrals
+> - Far right: small dismiss button (X icon, 16px, bone-muted, hover bone)
+>
+> Behaviour:
+> - Shown only if profile.created_at < 30 days ago AND user has not dismissed it
+> - Dismissal stored in localStorage AND profiles.referral_banner_dismissed_at
+> - Once dismissed, never re-appears
+> - Animates in with subtle fade + 4px lift (200ms cubic-bezier(0.16, 1, 0.3, 1))
+>
+> No urgency, no growth-hack pressure. The component should feel like a quiet nudge, not a popup demanding attention.
+
 ### Admin — rule changes review
 
 > Design /firms/admin/changes — the admin rule change review panel (visible only to users with admin role).
@@ -651,11 +744,12 @@ You'll have roughly 15-18 conversations across the project. Run them in this ord
 15. Backtest
 16. Logged-in firm directory
 
-**Stage 7 — Settings and admin (3 conversations)**
+**Stage 7 — Settings, billing, referrals, admin (5 conversations)**
 17. Settings (all sub-sections)
 18. Risk budget settings
 19. Billing
-20. Admin rule changes
+20. Referrals (page + banner component)
+21. Admin rule changes
 
 ### Iteration within a conversation
 
@@ -726,6 +820,7 @@ fundedpal/
     ├── settings.html
     ├── risk-budget.html
     ├── billing.html
+    ├── referrals.html
     └── admin-rule-changes.html
 ```
 
@@ -800,13 +895,14 @@ Visual designs from Claude Design, used as reference by Claude Code during imple
 | backtest.html | /backtest | Prompt 31 |
 | firm-directory-app.html | /firms (logged in) | Prompt 11 |
 
-## Settings and admin
+## Settings, billing, referrals, admin
 
 | File | Surface | Build prompt |
 |---|---|---|
 | settings.html | /settings | Prompt 18, 30 |
 | risk-budget.html | /accounts/[id]/risk | Prompt 18 |
 | billing.html | /billing | Prompt 35 |
+| referrals.html | /referrals (page + banner component) | Prompt 35.5 |
 | admin-rule-changes.html | /firms/admin/changes | Prompt 33 |
 ```
 
